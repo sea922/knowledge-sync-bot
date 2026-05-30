@@ -1,0 +1,11 @@
+# .dockerignore
+.env
+.git/
+.gitignore
+__pycache__/
+*.py[cod]
+articles/
+state/
+docs/
+*.md
+.DS_Store
