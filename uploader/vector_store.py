@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import openai
+from openai import AuthenticationError
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,17 @@ def upload_delta(
         dict with counts: added, updated, skipped, errors
     """
     client = openai.OpenAI(api_key=openai_api_key or os.environ.get("OPENAI_API_KEY"))
-    state = _load_state()
 
+    # Preflight: validate key before doing any real work
+    try:
+        client.models.list()
+    except AuthenticationError:
+        logger.error(
+            "Invalid or missing OpenAI API key — aborting upload. "
+        )
+        raise
+
+    state = _load_state()
     added = updated = skipped = errors = 0
 
     for filepath in filepaths:
@@ -131,6 +141,8 @@ def upload_delta(
                 added += 1
                 logger.info("Added:   %s", slug)
 
+        except AuthenticationError:
+            raise
         except Exception as exc:
             errors += 1
             logger.error("Error processing %s: %s", slug, exc)
