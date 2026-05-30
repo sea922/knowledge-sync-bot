@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 import time
 
+from openai import AuthenticationError
+
 from scraper.scraper import scrape_articles
 from converter.markdown import convert_article
 from uploader.vector_store import upload_delta
@@ -109,6 +111,9 @@ class KnowledgeSyncPipeline:
 
             success = True
             return True
+
+        except AuthenticationError:
+            return False
 
         except Exception as exc:
             logger.exception("Unhandled error during pipeline execution: %s", exc)
