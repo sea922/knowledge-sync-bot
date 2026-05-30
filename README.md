@@ -42,6 +42,9 @@ cp .env.sample .env
 # Direct Python
 python main.py
 
+# Unittest
+python -m pytest -v tests/
+
 # Docker
 docker build -t knowledge-sync-bot .
 docker run --env-file .env knowledge-sync-bot
