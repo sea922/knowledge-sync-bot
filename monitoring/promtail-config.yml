@@ -16,7 +16,7 @@ scrape_configs:
         labels:
           job: optibot
           app: knowledge-sync-bot
-          __path__: /var/log/optibot/pipeline.log.*
+          __path__: /var/log/optibot/pipeline.log*
 
     pipeline_stages:
       # Parse the structured log format:
