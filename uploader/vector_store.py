@@ -32,7 +32,7 @@ def _md5(content: str) -> str:
     return hashlib.md5(content.encode("utf-8")).hexdigest()
 
 
-def _load_state() -> dict:
+def load_state() -> dict:
     """Load the persisted hash map from disk."""
     os.makedirs(STATE_DIR, exist_ok=True)
     if not os.path.exists(STATE_FILE):
@@ -106,7 +106,7 @@ def upload_delta(
         )
         raise
 
-    state = _load_state()
+    state = load_state()
     added = updated = skipped = errors = 0
 
     for filepath in filepaths:

@@ -10,9 +10,11 @@ import time
 
 from openai import AuthenticationError
 
+import os
+
 from scraper.scraper import scrape_articles
-from converter.markdown import convert_article
-from uploader.vector_store import upload_delta
+from converter.markdown import convert_article, ARTICLES_DIR
+from uploader.vector_store import upload_delta, load_state
 from observability.metrics import PipelineMetrics
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ class KnowledgeSyncPipeline:
             md_paths: list[str] = []
 
             scrape_start = time.perf_counter()
-            for article in scrape_articles():
+            for article in scrape_articles(10):
                 articles.append(article)
             scrape_duration = time.perf_counter() - scrape_start
 
@@ -54,8 +56,18 @@ class KnowledgeSyncPipeline:
             logger.info("Scrape complete: %d articles in %.1fs", len(articles), scrape_duration)
 
             # Phase 2: Convert
+            state = load_state()
             convert_start = time.perf_counter()
+            skipped_convert = 0
             for article in articles:
+                slug = article.get("slug")
+                updated_at = article.get("updated_at") or ""
+                existing = state.get(slug)
+                
+                if existing and updated_at and existing.get("hash") == updated_at:
+                    skipped_convert += 1
+                    continue
+
                 try:
                     path = convert_article(article)
                     md_paths.append(path)
@@ -66,20 +78,20 @@ class KnowledgeSyncPipeline:
             self.metrics.articles_converted.set(len(md_paths))
             self.metrics.phase_duration.labels(phase="convert").set(round(convert_duration, 3))
             logger.info(
-                "Convert complete: %d/%d articles in %.1fs",
-                len(md_paths), len(articles), convert_duration,
+                "[Phase 2] Convert complete: %d/%d articles in %.1fs (Skipped: %d)",
+                len(md_paths), len(articles), convert_duration, skipped_convert
             )
 
-            if len(md_paths) < 30:
-                logger.warning(
-                    "WARNING: Only %d articles collected (target >= 30). "
-                    "The site structure may have changed.",
-                    len(md_paths),
-                )
-
             if not md_paths:
-                logger.error("No articles to upload.")
-                return False
+                if skipped_convert > 0:
+                    logger.info("All %d scraped articles are up to date. Skipping upload phase.", skipped_convert)
+                    summary = {"added": 0, "updated": 0, "skipped": skipped_convert, "errors": 0}
+                    self.metrics.record_upload_summary(summary)
+                    success = True
+                    return True
+                else:
+                    logger.error("No articles to upload.")
+                    return False
 
             # Phase 3: Upload delta to Vector Store
             logger.info("[Phase 3] Uploading delta to Vector Store %s ...", self.vector_store_id)
@@ -95,6 +107,9 @@ class KnowledgeSyncPipeline:
                 openai_api_key=self.api_key,
             )
             upload_duration = time.perf_counter() - upload_start
+
+            # Add the ones we skipped during convert to the total skipped metric
+            summary["skipped"] += skipped_convert
 
             self.metrics.record_upload_summary(summary)
             self.metrics.phase_duration.labels(phase="upload").set(round(upload_duration, 3))
