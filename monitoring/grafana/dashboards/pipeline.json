@@ -1,0 +1,156 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "OptiBot Mini — Knowledge Sync Pipeline Metrics",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Last Run Status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "FAILED" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "SUCCESS" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_last_run_success{job=\"optibot_pipeline\"}", "instant": true, "legendFormat": "Status" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Last Run Time",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_last_run_timestamp{job=\"optibot_pipeline\"} * 1000", "instant": true, "legendFormat": "" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total Run Duration",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 300 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_phase_duration_seconds{job=\"optibot_pipeline\", phase=\"total\"}", "instant": true, "legendFormat": "" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Articles Scraped",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 30 }] },
+          "color": { "mode": "thresholds" },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 14, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_articles_scraped_total{job=\"optibot_pipeline\"}", "instant": true, "legendFormat": "" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Articles Converted",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 30 }] },
+          "color": { "mode": "thresholds" },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 18, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_articles_converted_total{job=\"optibot_pipeline\"}", "instant": true, "legendFormat": "" }]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Upload Results (Last Run)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "added" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "updated" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "skipped" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "errors" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 4 },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_upload_total{job=\"optibot_pipeline\", status=\"added\"}", "instant": true, "legendFormat": "added" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_upload_total{job=\"optibot_pipeline\", status=\"updated\"}", "instant": true, "legendFormat": "updated" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_upload_total{job=\"optibot_pipeline\", status=\"skipped\"}", "instant": true, "legendFormat": "skipped" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_upload_total{job=\"optibot_pipeline\", status=\"errors\"}", "instant": true, "legendFormat": "errors" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Phase Durations (Last Run)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 300 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showUnfilled": true },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_phase_duration_seconds{job=\"optibot_pipeline\", phase=\"scrape\"}", "instant": true, "legendFormat": "Scrape" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_phase_duration_seconds{job=\"optibot_pipeline\", phase=\"convert\"}", "instant": true, "legendFormat": "Convert" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_phase_duration_seconds{job=\"optibot_pipeline\", phase=\"upload\"}", "instant": true, "legendFormat": "Upload" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "pipeline_phase_duration_seconds{job=\"optibot_pipeline\", phase=\"total\"}", "instant": true, "legendFormat": "Total" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["optibot", "pipeline"],
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "OptiBot Mini — Pipeline Dashboard",
+  "uid": "optibot-pipeline",
+  "version": 1
+}
