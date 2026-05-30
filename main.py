@@ -4,9 +4,11 @@ import logging
 import os
 import sys
 
+import openai
 from dotenv import load_dotenv
 
 from pipeline import KnowledgeSyncPipeline
+from uploader.setup import ensure_vector_store, ensure_assistant
 from utils.logging_config import setup_logging
 from utils.validation import validate_env
 
@@ -22,11 +24,15 @@ def main() -> None:
     logger.info("OptiBot Mini — Knowledge Sync Pipeline")
     logger.info("=" * 60)
 
-    api_key, vector_store_id = validate_env()
-    
-    assistant_id = os.environ.get("ASSISTANT_ID", "")
-    if assistant_id:
-        logger.info("Assistant ID: %s", assistant_id)
+    api_key, vector_store_id, assistant_id = validate_env()
+
+    # Auto-provision resources if IDs are missing
+    client = openai.OpenAI(api_key=api_key)
+    vector_store_id = ensure_vector_store(client, vector_store_id)
+    assistant_id = ensure_assistant(client, assistant_id, vector_store_id)
+
+    logger.info("Vector Store ID : %s", vector_store_id)
+    logger.info("Assistant ID    : %s", assistant_id)
 
     # Instantiate and run the pipeline
     pipeline = KnowledgeSyncPipeline(api_key=api_key, vector_store_id=vector_store_id)
