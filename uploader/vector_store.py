@@ -132,12 +132,14 @@ def upload_delta(
                 )
                 file_id = _upload_file(client, vector_store_id, filepath)
                 state[slug] = {"hash": current_version, "file_id": file_id}
+                _save_state(state)
                 updated += 1
                 logger.info("Updated: %s", slug)
             else:
                 # New article
                 file_id = _upload_file(client, vector_store_id, filepath)
                 state[slug] = {"hash": current_version, "file_id": file_id}
+                _save_state(state)
                 added += 1
                 logger.info("Added:   %s", slug)
 
@@ -146,8 +148,6 @@ def upload_delta(
         except Exception as exc:
             errors += 1
             logger.error("Error processing %s: %s", slug, exc)
-
-    _save_state(state)
 
     summary = {"added": added, "updated": updated, "skipped": skipped, "errors": errors}
     logger.info(
