@@ -27,8 +27,3 @@ scrape_configs:
       # Promote parsed fields to Loki labels for filtering
       - labels:
           level:
-
-      # Use the log timestamp instead of ingestion time
-      - timestamp:
-          source: timestamp
-          format: RFC3339

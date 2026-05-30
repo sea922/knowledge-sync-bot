@@ -79,7 +79,8 @@ def ensure_assistant(client: openai.OpenAI, assistant_id: str, vector_store_id: 
         logger.info("Re-using existing Assistant from state: %s", asst_id)
         return asst_id
 
-    logger.info("ASSISTANT_ID not set — creating a new Assistant '%s'...", ASSISTANT_NAME)
+    # logger.info("ASSISTANT_ID not set — creating a new Assistant '%s'...", ASSISTANT_NAME)
+    # pyrefly: ignore [deprecated]
     assistant = client.beta.assistants.create(
         name=ASSISTANT_NAME,
         instructions=ASSISTANT_INSTRUCTIONS,
