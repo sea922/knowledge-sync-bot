@@ -28,7 +28,7 @@ def temp_markdown(tmp_path):
 
 def test_upload_delta_success(mocker, mock_openai, temp_markdown):
     # Mock state
-    mock_load = mocker.patch("uploader.vector_store._load_state", return_value={})
+    mock_load = mocker.patch("uploader.vector_store.load_state", return_value={})
     mock_save = mocker.patch("uploader.vector_store._save_state")
     
     summary = upload_delta(
@@ -55,7 +55,7 @@ def test_upload_delta_hash_cache(mocker, mock_openai, temp_markdown):
         "article1": {"hash": "v1", "file_id": "file_1"},
         "article2": {"hash": "v1", "file_id": "file_2"},
     }
-    mocker.patch("uploader.vector_store._load_state", return_value=existing_state)
+    mocker.patch("uploader.vector_store.load_state", return_value=existing_state)
     mocker.patch("uploader.vector_store._save_state")
     
     updated_at_map = {
