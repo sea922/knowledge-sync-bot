@@ -29,13 +29,13 @@ ARTICLES_DIR = "articles"
 def _fix_relative_links(soup: BeautifulSoup) -> None:
     """Convert relative href and src attributes to absolute URLs in-place."""
     for tag in soup.find_all(href=True):
-        href = tag["href"]
-        if href.startswith("/"):
+        href = tag.get("href")
+        if isinstance(href, str) and href.startswith("/"):
             tag["href"] = BASE_URL + href
 
     for tag in soup.find_all(src=True):
-        src = tag["src"]
-        if src.startswith("/"):
+        src = tag.get("src")
+        if isinstance(src, str) and src.startswith("/"):
             tag["src"] = BASE_URL + src
 
 
@@ -51,7 +51,13 @@ def _clean_html(html: str) -> BeautifulSoup:
 
     # Remove elements that look like breadcrumbs or feedback widgets
     for el in soup.find_all(True):
-        classes = " ".join(el.get("class", []))
+        raw_classes = el.get("class")
+        if isinstance(raw_classes, list):
+            classes = " ".join(raw_classes)
+        elif isinstance(raw_classes, str):
+            classes = raw_classes
+        else:
+            classes = ""
         if any(
             kw in classes
             for kw in [
