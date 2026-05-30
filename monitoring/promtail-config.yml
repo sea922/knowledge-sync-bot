@@ -1,0 +1,34 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: optibot_pipeline
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: optibot
+          app: knowledge-sync-bot
+          __path__: /var/log/optibot/pipeline.log.*
+
+    pipeline_stages:
+      # Parse the structured log format:
+      # 2026-05-30T22:41:17Z | ERROR    | Some message here
+      - regex:
+          expression: '^(?P<timestamp>\S+) \| (?P<level>\S+)\s*\| (?P<message>.+)$'
+
+      # Promote parsed fields to Loki labels for filtering
+      - labels:
+          level:
+
+      # Use the log timestamp instead of ingestion time
+      - timestamp:
+          source: timestamp
+          format: RFC3339
