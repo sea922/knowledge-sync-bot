@@ -65,40 +65,52 @@ def test_pipeline_run_no_articles(mock_pipeline_deps):
     mock_upload.assert_not_called()
     mock_metrics_push.assert_called_once()
 
-def test_pipeline_run_partial_skip(mock_pipeline_deps):
+def test_pipeline_run_partial_skip(mock_pipeline_deps, mocker):
     mock_scrape, mock_convert, mock_upload, mock_load_state, mock_metrics_push = mock_pipeline_deps
-    
-    # article-1 is already up to date, article-2 is new/changed
+
+    # article-1 is already up to date (has a hash match), article-2 is new/changed.
+    # article-1's existing .md is on disk — mock os.path.exists to confirm that.
     mock_load_state.return_value = {
         "article-1": {"hash": "v1"}
     }
-    mock_upload.return_value = {"added": 1, "updated": 0, "skipped": 0, "errors": 0}
-    
+    mocker.patch("pipeline.os.path.exists", return_value=True)
+    mock_upload.return_value = {
+        "added": 1, "updated": 0, "skipped": 1, "errors": 0,
+        "files_embedded": 1, "chunks_embedded": 3,
+    }
+
     pipeline = KnowledgeSyncPipeline(api_key="test-key", vector_store_id="vs_123")
     success = pipeline.run()
-    
+
     assert success is True
-    # Should only convert article-2
+    # Only article-2 should be converted
     assert mock_convert.call_count == 1
-    # Should call upload delta with only the converted article's path
+    # upload_delta receives both paths: the converted article-2 AND article-1's existing .md
     mock_upload.assert_called_once()
     args, kwargs = mock_upload.call_args
-    assert len(kwargs["filepaths"]) == 1
+    assert len(kwargs["filepaths"]) == 2
 
-def test_pipeline_run_all_skipped(mock_pipeline_deps):
+def test_pipeline_run_all_skipped(mock_pipeline_deps, mocker):
     mock_scrape, mock_convert, mock_upload, mock_load_state, mock_metrics_push = mock_pipeline_deps
-    
-    # Both articles are up to date
+
+    # Both articles are up to date (hash matches)
     mock_load_state.return_value = {
         "article-1": {"hash": "v1"},
-        "article-2": {"hash": "v1"}
+        "article-2": {"hash": "v1"},
     }
-    
+    # The existing .md files are on disk
+    mocker.patch("pipeline.os.path.exists", return_value=True)
+    # upload_delta is still called to verify remote existence; it reports all skipped
+    mock_upload.return_value = {
+        "added": 0, "updated": 0, "skipped": 2, "errors": 0,
+        "files_embedded": 0, "chunks_embedded": 0,
+    }
+
     pipeline = KnowledgeSyncPipeline(api_key="test-key", vector_store_id="vs_123")
     success = pipeline.run()
-    
-    # Pipeline should succeed without calling upload or convert
+
+    # Pipeline should succeed; convert is never called; upload IS called (remote check)
     assert success is True
     mock_convert.assert_not_called()
-    mock_upload.assert_not_called()
+    mock_upload.assert_called_once()
     mock_metrics_push.assert_called_once()

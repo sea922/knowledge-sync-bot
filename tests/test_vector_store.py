@@ -7,12 +7,19 @@ from uploader.vector_store import upload_delta
 def mock_openai(mocker):
     mock_client = mocker.Mock()
     mock_client.models.list.return_value = True
-    
+
     # Mock upload_and_poll response
     mock_upload_resp = mocker.Mock()
     mock_upload_resp.id = "file_123"
     mock_client.vector_stores.files.upload_and_poll.return_value = mock_upload_resp
-    
+
+    # Mock vector_stores.files.list (used by _fetch_remote_file_ids).
+    # Default: empty store (no files present remotely).
+    mock_page = mocker.Mock()
+    mock_page.data = []
+    mock_page.has_more = False
+    mock_client.vector_stores.files.list.return_value = mock_page
+
     mocker.patch("uploader.vector_store.openai.OpenAI", return_value=mock_client)
     return mock_client
 
@@ -42,9 +49,12 @@ def test_upload_delta_success(mocker, mock_openai, temp_markdown):
     assert summary["updated"] == 0
     assert summary["skipped"] == 0
     assert summary["errors"] == 0
-    
-    # Ensure save was called
-    mock_save.assert_called_once()
+    assert summary["files_embedded"] == 2
+    assert summary["chunks_embedded"] >= 0
+
+    # _save_state is called once per uploaded file
+    assert mock_save.call_count == 2
+    # Last saved state must contain both slugs with the new file_id
     saved_state = mock_save.call_args[0][0]
     assert "article1" in saved_state
     assert saved_state["article1"]["file_id"] == "file_123"
@@ -57,24 +67,36 @@ def test_upload_delta_hash_cache(mocker, mock_openai, temp_markdown):
     }
     mocker.patch("uploader.vector_store.load_state", return_value=existing_state)
     mocker.patch("uploader.vector_store._save_state")
-    
+
+    # Make the remote store contain file_1 so article1 is skipped (unchanged + present).
+    # article2's file_id (file_2) is NOT in the remote list, so it will be re-uploaded
+    # even though the hash matches — but here article2 has a changed hash (v2), so it
+    # goes through the normal "delete old + re-upload" path regardless.
+    mock_vf = mocker.Mock()
+    mock_vf.id = "file_1"
+    mock_page = mocker.Mock()
+    mock_page.data = [mock_vf]
+    mock_page.has_more = False
+    mock_openai.vector_stores.files.list.return_value = mock_page
+
     updated_at_map = {
-        "article1": "v1", # Unchanged
-        "article2": "v2", # Changed
+        "article1": "v1",  # Unchanged
+        "article2": "v2",  # Changed
     }
-    
+
     summary = upload_delta(
         filepaths=temp_markdown,
         vector_store_id="vs_123",
         updated_at_map=updated_at_map,
         openai_api_key="fake-key"
     )
-    
+
     assert summary["added"] == 0
     assert summary["updated"] == 1
     assert summary["skipped"] == 1
     assert summary["errors"] == 0
-    
+    assert summary["files_embedded"] == 1
+
     # Verify file deletion was called for article2
     mock_openai.vector_stores.files.delete.assert_called_once_with(
         vector_store_id="vs_123", file_id="file_2"

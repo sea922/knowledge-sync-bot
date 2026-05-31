@@ -63,7 +63,26 @@ docker run --env-file .env knowledge-sync-bot
 
 ### Chunking Strategy
 
-OpenAI's built-in **`auto`** chunking: ≤ 800 tokens per chunk, 400-token overlap. Ideal for help articles — precise retrieval without losing context across chunk boundaries.
+The pipeline uses OpenAI's built-in **`auto` chunking strategy** delegated to the Vector Store API. The parameters are:
+
+| Parameter | Value | Reason |
+|---|---|---|
+| Max chunk size | **800 tokens** | Fits a complete how-to step or procedure without splitting mid-idea |
+| Overlap | **400 tokens** (50 %) | Ensures context from the previous chunk bleeds into the next, so answers that span two steps are never missed |
+| Encoding estimate | ~4 chars/token | Standard GPT tokenizer average for English prose |
+
+**Why `auto`?** Help-center articles are short, self-contained, and written in plain English paragraphs. OpenAI's auto strategy splits on natural sentence/paragraph boundaries first, then falls back to token limits — giving semantically coherent chunks without custom pre-processing code.
+
+**Chunk count logging:** After every upload the pipeline logs:
+```
+Embedded N file(s), ~C chunk(s) this run
+```
+The count `C` is estimated with the formula:
+```
+chunks = max(1, ceil((file_tokens − 800) / 400) + 1)
+```
+where `file_tokens ≈ file_bytes / 4`. The estimate aligns closely with OpenAI's actual split count for prose files.
+
 
 ---
 
