@@ -68,12 +68,15 @@ def test_pipeline_run_no_articles(mock_pipeline_deps):
 def test_pipeline_run_partial_skip(mock_pipeline_deps, mocker):
     mock_scrape, mock_convert, mock_upload, mock_load_state, mock_metrics_push = mock_pipeline_deps
 
-    # article-1 is already up to date (has a hash match), article-2 is new/changed.
-    # article-1's existing .md is on disk — mock os.path.exists to confirm that.
+    # article-1 is already up to date (hash match) AND its .md exists on disk.
+    # article-2 is new/changed, so it gets converted.
     mock_load_state.return_value = {
         "article-1": {"hash": "v1"}
     }
-    mocker.patch("pipeline.os.path.exists", return_value=True)
+    # Only return True for article-1's md path
+    def exists_side_effect(path):
+        return "article-1" in path
+    mocker.patch("pipeline.os.path.exists", side_effect=exists_side_effect)
     mock_upload.return_value = {
         "added": 1, "updated": 0, "skipped": 1, "errors": 0,
         "files_embedded": 1, "chunks_embedded": 3,
@@ -83,22 +86,50 @@ def test_pipeline_run_partial_skip(mock_pipeline_deps, mocker):
     success = pipeline.run()
 
     assert success is True
-    # Only article-2 should be converted
+    # Only article-2 should be converted (article-1 is skipped — .md present)
     assert mock_convert.call_count == 1
-    # upload_delta receives both paths: the converted article-2 AND article-1's existing .md
+    # upload_delta receives both paths: article-1's existing .md + article-2's converted path
     mock_upload.assert_called_once()
     args, kwargs = mock_upload.call_args
+    assert len(kwargs["filepaths"]) == 2
+
+def test_pipeline_run_missing_md_on_disk(mock_pipeline_deps, mocker):
+    mock_scrape, mock_convert, mock_upload, mock_load_state, mock_metrics_push = mock_pipeline_deps
+
+    # Both articles are "unchanged" by hash, but article-2's .md is missing from disk.
+    mock_load_state.return_value = {
+        "article-1": {"hash": "v1"},
+        "article-2": {"hash": "v1"},
+    }
+    # article-1's .md exists; article-2's .md does NOT exist
+    def exists_side_effect(path):
+        return "article-1" in path
+    mocker.patch("pipeline.os.path.exists", side_effect=exists_side_effect)
+    mock_convert.side_effect = ["/path/to/article-2.md"]
+    mock_upload.return_value = {
+        "added": 0, "updated": 0, "skipped": 1, "errors": 0,
+        "files_embedded": 1, "chunks_embedded": 2,
+    }
+
+    pipeline = KnowledgeSyncPipeline(api_key="test-key", vector_store_id="vs_123")
+    success = pipeline.run()
+
+    assert success is True
+    # article-2 must be re-converted even though its hash hasn't changed
+    assert mock_convert.call_count == 1
+    mock_upload.assert_called_once()
+    args, kwargs = mock_upload.call_args
+    # Both paths must be present: article-1 (existing) + article-2 (re-converted)
     assert len(kwargs["filepaths"]) == 2
 
 def test_pipeline_run_all_skipped(mock_pipeline_deps, mocker):
     mock_scrape, mock_convert, mock_upload, mock_load_state, mock_metrics_push = mock_pipeline_deps
 
-    # Both articles are up to date (hash matches)
+    # Both articles are up to date (hash matches) and their .md files are on disk
     mock_load_state.return_value = {
         "article-1": {"hash": "v1"},
         "article-2": {"hash": "v1"},
     }
-    # The existing .md files are on disk
     mocker.patch("pipeline.os.path.exists", return_value=True)
     # upload_delta is still called to verify remote existence; it reports all skipped
     mock_upload.return_value = {

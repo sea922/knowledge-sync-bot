@@ -19,7 +19,7 @@ BASE_URL = "https://support.optisigns.com"
 API_URL = f"{BASE_URL}/api/v2/help_center/en-us/articles.json"
 
 # Polite crawl delay (seconds) between API requests
-CRAWL_DELAY = 0.5
+CRAWL_DELAY = 0.2
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

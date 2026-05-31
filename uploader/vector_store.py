@@ -160,7 +160,7 @@ def upload_delta(
         client.models.list()
     except AuthenticationError:
         logger.error(
-            "Invalid or missing OpenAI API key — aborting upload. "
+            "Invalid OpenAI API key — aborting upload. "
         )
         raise
 

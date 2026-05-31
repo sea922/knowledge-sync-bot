@@ -69,15 +69,20 @@ class KnowledgeSyncPipeline:
                 existing = state.get(slug)
 
                 if existing and updated_at and existing.get("hash") == updated_at:
-                    # Content unchanged — skip re-conversion, but keep the existing
-                    # .md path so upload_delta can check remote existence.
                     existing_md = os.path.abspath(
                         os.path.join(ARTICLES_DIR, f"{slug}.md")
                     )
                     if os.path.exists(existing_md):
+                        # Content unchanged AND .md on disk → skip re-conversion,
+                        # but keep the path so Phase 3 can verify remote existence.
                         md_paths.append(existing_md)
-                    skipped_convert += 1
-                    continue
+                        skipped_convert += 1
+                        continue
+                    # Content unchanged BUT .md missing from disk → fall through
+                    # to convert_article so the file is regenerated before upload.
+                    logger.info(
+                        "Re-converting (missing .md on disk): %s", slug
+                    )
 
                 try:
                     path = convert_article(article)
