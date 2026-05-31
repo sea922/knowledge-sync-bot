@@ -47,7 +47,7 @@ class KnowledgeSyncPipeline:
             md_paths: list[str] = []
 
             scrape_start = time.perf_counter()
-            for article in scrape_articles(10):
+            for article in scrape_articles(100):
                 articles.append(article)
             scrape_duration = time.perf_counter() - scrape_start
 

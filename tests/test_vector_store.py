@@ -8,10 +8,10 @@ def mock_openai(mocker):
     mock_client = mocker.Mock()
     mock_client.models.list.return_value = True
 
-    # Mock upload_and_poll response
+    # Mock files.create response
     mock_upload_resp = mocker.Mock()
     mock_upload_resp.id = "file_123"
-    mock_client.vector_stores.files.upload_and_poll.return_value = mock_upload_resp
+    mock_client.files.create.return_value = mock_upload_resp
 
     # Mock vector_stores.files.list (used by _fetch_remote_file_ids).
     # Default: empty store (no files present remotely).

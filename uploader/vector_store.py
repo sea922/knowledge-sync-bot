@@ -19,6 +19,8 @@ import json
 import logging
 import math
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import openai
@@ -59,9 +61,14 @@ def _delete_from_vector_store(
             vector_store_id=vector_store_id,
             file_id=file_id,
         )
-        client.files.delete(file_id)
-        logger.debug("Deleted file %s from vector store", file_id)
     except Exception as exc:
+        logger.debug("Could not delete from vector store (might already be detached): %s", exc)
+
+    try:
+        client.files.delete(file_id)
+        logger.debug("Deleted file %s from OpenAI Files API", file_id)
+    except Exception as exc:
+        logger.debug("Could not delete from OpenAI Files API: %s", exc)
         logger.warning("Could not delete file %s: %s", file_id, exc)
 
 
@@ -100,6 +107,8 @@ _CHUNK_TOKENS = 800
 _CHUNK_OVERLAP = 400
 _CHARS_PER_TOKEN = 4  # rough but consistent estimate
 
+MAX_UPLOAD_WORKERS = 10
+
 
 def _estimate_chunks(filepath: str) -> int:
     """
@@ -117,21 +126,85 @@ def _estimate_chunks(filepath: str) -> int:
     return math.ceil((total_tokens - _CHUNK_TOKENS) / stride) + 1
 
 
+def _process_one_file(
+    filepath: str,
+    client: openai.OpenAI,
+    vector_store_id: str,
+    updated_at_map: dict[str, str] | None,
+    state: dict,
+    state_lock: threading.Lock,
+    remote_file_ids: set[str],
+) -> dict:
+    slug = Path(filepath).stem
+    try:
+        if updated_at_map and updated_at_map.get(slug):
+            current_version = updated_at_map[slug]
+        else:
+            content = Path(filepath).read_text(encoding="utf-8")
+            current_version = _md5(content)
+
+        existing = state.get(slug)
+
+        # ── Case 1: unchanged content ──────────────────────────────────────
+        if existing and existing.get("hash") == current_version:
+            file_id = existing.get("file_id")
+
+            if file_id and file_id in remote_file_ids:
+                # Unchanged AND still in vector store → nothing to do
+                logger.debug("Skipped (unchanged): %s", slug)
+                return {"action": "skipped", "slug": slug, "chunks": 0, "file_id": None}
+
+            # Unchanged BUT file was deleted from the vector store.
+            # The file is already gone — just upload a fresh copy.
+            # No delete call needed (and no 404 risk).
+            logger.info("Re-uploading (missing from vector store): %s", slug)
+            file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
+            with state_lock:
+                state[slug] = {"hash": current_version, "file_id": file_id}
+                _save_state(state)
+            logger.info("Added:   %s (~%d chunk(s))", slug, chunk_count)
+            return {"action": "added", "slug": slug, "chunks": chunk_count, "file_id": file_id}
+
+        # ── Case 2: content changed, old file exists ───────────────────────
+        if existing and existing.get("file_id"):
+            _delete_from_vector_store(client, vector_store_id, existing["file_id"])
+            file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
+            with state_lock:
+                state[slug] = {"hash": current_version, "file_id": file_id}
+                _save_state(state)
+            logger.info("Updated: %s (~%d chunk(s))", slug, chunk_count)
+            return {"action": "updated", "slug": slug, "chunks": chunk_count, "file_id": file_id}
+
+        # ── Case 3: brand-new article ──────────────────────────────────────
+        file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
+        with state_lock:
+            state[slug] = {"hash": current_version, "file_id": file_id}
+            _save_state(state)
+        logger.info("Added:   %s (~%d chunk(s))", slug, chunk_count)
+        return {"action": "added", "slug": slug, "chunks": chunk_count, "file_id": file_id}
+
+    except AuthenticationError:
+        raise  # Propagate immediately so the caller can cancel other workers
+    except Exception as exc:
+        logger.error("Error processing %s: %s", slug, exc)
+        return {"action": "error", "slug": slug, "chunks": 0, "file_id": None}
+
+
 def _upload_file(
     client: openai.OpenAI, vector_store_id: str, filepath: str
 ) -> tuple[str, int]:
     """
     Upload a single file to the vector store using OpenAI's auto chunking strategy
-    (800-token chunks, 400-token overlap).
+    Upload a single file to OpenAI's Files API (does not attach to vector store).
 
     Returns:
         (file_id, estimated_chunk_count)
     """
     chunks = _estimate_chunks(filepath)
     with open(filepath, "rb") as f:
-        response = client.vector_stores.files.upload_and_poll(
-            vector_store_id=vector_store_id,
+        response = client.files.create(
             file=(os.path.basename(filepath), f, "text/plain"),
+            purpose="assistants",
         )
     return response.id, chunks
 
@@ -141,6 +214,7 @@ def upload_delta(
     vector_store_id: str,
     updated_at_map: dict[str, str] | None = None,
     openai_api_key: str | None = None,
+    max_workers: int = MAX_UPLOAD_WORKERS,
 ) -> dict:
     """
     Upload only new or changed Markdown files to the OpenAI Vector Store.
@@ -149,6 +223,7 @@ def upload_delta(
         filepaths: list of absolute paths to .md files
         vector_store_id: the Vector Store ID (vs_...)
         openai_api_key: optional; falls back to OPENAI_API_KEY env var
+        max_workers: max parallel upload threads
 
     Returns:
         dict with counts: added, updated, skipped, errors
@@ -159,15 +234,11 @@ def upload_delta(
     try:
         client.models.list()
     except AuthenticationError:
-        logger.error(
-            "Invalid OpenAI API key — aborting upload. "
-        )
+        logger.error("Invalid OpenAI API key — aborting upload.")
         raise
 
     state = load_state()
-    added = updated = skipped = errors = 0
-    files_embedded = 0   # files actually uploaded this run
-    chunks_embedded = 0  # estimated chunks for those files
+    state_lock = threading.Lock()
 
     # Fetch the live file IDs from the vector store once.
     # This lets us detect articles that were manually deleted from the store
@@ -176,57 +247,56 @@ def upload_delta(
     remote_file_ids = _fetch_remote_file_ids(client, vector_store_id)
     logger.debug("Remote vector store contains %d file(s).", len(remote_file_ids))
 
-    for filepath in filepaths:
-        slug = Path(filepath).stem
+    results: list[dict] = []
+    logger.info(
+        "Processing %d file(s) with up to %d parallel worker(s) ...",
+        len(filepaths), max_workers,
+    )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _process_one_file,
+                fp, client, vector_store_id, updated_at_map,
+                state, state_lock, remote_file_ids,
+            ): fp
+            for fp in filepaths
+        }
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except AuthenticationError:
+                for f in futures:
+                    f.cancel()
+                raise
+            except Exception as exc:
+                slug = Path(futures[future]).stem
+                logger.error("Unexpected error for %s: %s", slug, exc)
+                results.append({"action": "error", "slug": slug, "chunks": 0})
+
+    added    = sum(1 for r in results if r["action"] == "added")
+    updated  = sum(1 for r in results if r["action"] == "updated")
+    skipped  = sum(1 for r in results if r["action"] == "skipped")
+    errors   = sum(1 for r in results if r["action"] == "error")
+    files_embedded  = added + updated
+    chunks_embedded = sum(r["chunks"] for r in results if r["action"] in ("added", "updated"))
+
+    # Now that all files are uploaded, attach them to the vector store in ONE batch!
+    batch_file_ids = [r["file_id"] for r in results if r["action"] in ("added", "updated") and r.get("file_id")]
+    if batch_file_ids:
+        logger.info(
+            "Attaching %d uploaded file(s) to vector store in a single batch...",
+            len(batch_file_ids)
+        )
         try:
-            if updated_at_map and updated_at_map.get(slug):
-                current_version = updated_at_map[slug]
-            else:
-                content = Path(filepath).read_text(encoding="utf-8")
-                current_version = _md5(content)
-
-            existing = state.get(slug)
-
-            if existing and existing.get("hash") == current_version:
-                file_id = existing.get("file_id")
-                if file_id and file_id in remote_file_ids:
-                    # Content unchanged AND file still present remotely → skip
-                    skipped += 1
-                    logger.debug("Skipped (unchanged): %s", slug)
-                    continue
-                # Content unchanged BUT file was deleted from the vector store
-                # (or no file_id recorded) → fall through to re-upload as new
-                logger.info(
-                    "Re-uploading (missing from vector store): %s", slug
-                )
-
-            if existing and existing.get("file_id"):
-                # Changed — delete old, re-upload
-                _delete_from_vector_store(
-                    client, vector_store_id, existing["file_id"]
-                )
-                file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
-                state[slug] = {"hash": current_version, "file_id": file_id}
-                _save_state(state)
-                updated += 1
-                files_embedded += 1
-                chunks_embedded += chunk_count
-                logger.info("Updated: %s (~%d chunk(s))", slug, chunk_count)
-            else:
-                # New article
-                file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
-                state[slug] = {"hash": current_version, "file_id": file_id}
-                _save_state(state)
-                added += 1
-                files_embedded += 1
-                chunks_embedded += chunk_count
-                logger.info("Added:   %s (~%d chunk(s))", slug, chunk_count)
-
-        except AuthenticationError:
-            raise
+            client.vector_stores.file_batches.create_and_poll(
+                vector_store_id=vector_store_id,
+                file_ids=batch_file_ids
+            )
+            logger.info("Batch processing complete!")
         except Exception as exc:
-            errors += 1
-            logger.error("Error processing %s: %s", slug, exc)
+            logger.error("Failed to process file batch in vector store: %s", exc)
+            # We don't fail the entire script here; files are uploaded and recorded in state.
+            # Next run they'll be retried under "missing from vector store".
 
     summary = {
         "added": added,
