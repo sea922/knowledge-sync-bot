@@ -101,6 +101,7 @@ Deployed as a **DigitalOcean App Platform Job** scheduled at `0 2 * * *` (2 AM U
 
 ### Monitoring & Observability
 ![Monitoring & Observability](docs/monitoring_and_observability.png)
+![Monitoring & Observability](docs/monitoring_and_observability.png)
 
 ## Screenshot
 
