@@ -46,3 +46,11 @@ def setup_logging(log_dir: str = "logs") -> None:
             logging.FileHandler(log_path, encoding="utf-8")
         ],
     )
+
+    # Silence noisy SDK loggers.
+    # `httpx` emits one "HTTP Request: ..." line per poll tick during upload_and_poll,
+    # flooding the log with dozens of GET lines for a single file upload.
+    # `openai` and `httpcore` follow the same pattern.
+    # We only want to see our own pipeline-level log messages.
+    for noisy_logger in ("httpx", "httpcore", "openai"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)

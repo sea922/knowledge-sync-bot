@@ -47,7 +47,7 @@ class KnowledgeSyncPipeline:
             md_paths: list[str] = []
 
             scrape_start = time.perf_counter()
-            for article in scrape_articles(40):
+            for article in scrape_articles(10):
                 articles.append(article)
             scrape_duration = time.perf_counter() - scrape_start
 
@@ -56,6 +56,10 @@ class KnowledgeSyncPipeline:
             logger.info("Scrape complete: %d articles in %.1fs", len(articles), scrape_duration)
 
             # Phase 2: Convert
+            # Articles whose content changed (or are new) are converted and written to disk.
+            # Articles that are unchanged are NOT re-converted, but their existing .md paths
+            # are still collected so Phase 3 can verify they still exist in the vector store
+            # (a user may have manually deleted them there).
             state = load_state()
             convert_start = time.perf_counter()
             skipped_convert = 0
@@ -63,8 +67,15 @@ class KnowledgeSyncPipeline:
                 slug = article.get("slug")
                 updated_at = article.get("updated_at") or ""
                 existing = state.get(slug)
-                
+
                 if existing and updated_at and existing.get("hash") == updated_at:
+                    # Content unchanged — skip re-conversion, but keep the existing
+                    # .md path so upload_delta can check remote existence.
+                    existing_md = os.path.abspath(
+                        os.path.join(ARTICLES_DIR, f"{slug}.md")
+                    )
+                    if os.path.exists(existing_md):
+                        md_paths.append(existing_md)
                     skipped_convert += 1
                     continue
 
@@ -78,20 +89,13 @@ class KnowledgeSyncPipeline:
             self.metrics.articles_converted.set(len(md_paths))
             self.metrics.phase_duration.labels(phase="convert").set(round(convert_duration, 3))
             logger.info(
-                "[Phase 2] Convert complete: %d/%d articles in %.1fs (Skipped: %d)",
+                "[Phase 2] Convert complete: %d/%d articles in %.1fs (Skipped convert: %d)",
                 len(md_paths), len(articles), convert_duration, skipped_convert
             )
 
             if not md_paths:
-                if skipped_convert > 0:
-                    logger.info("All %d scraped articles are up to date. Skipping upload phase.", skipped_convert)
-                    summary = {"added": 0, "updated": 0, "skipped": skipped_convert, "errors": 0}
-                    self.metrics.record_upload_summary(summary)
-                    success = True
-                    return True
-                else:
-                    logger.error("No articles to upload.")
-                    return False
+                logger.error("No articles to upload (no .md files found).")
+                return False
 
             # Phase 3: Upload delta to Vector Store
             logger.info("[Phase 3] Uploading delta to Vector Store %s ...", self.vector_store_id)
@@ -107,9 +111,6 @@ class KnowledgeSyncPipeline:
                 openai_api_key=self.api_key,
             )
             upload_duration = time.perf_counter() - upload_start
-
-            # Add the ones we skipped during convert to the total skipped metric
-            summary["skipped"] += skipped_convert
 
             self.metrics.record_upload_summary(summary)
             self.metrics.phase_duration.labels(phase="upload").set(round(upload_duration, 3))

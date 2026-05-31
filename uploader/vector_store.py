@@ -5,9 +5,10 @@ Delta logic:
   - Hashes for each article are stored in state/article_hashes.json
     keyed by article slug → {hash, file_id}.
   - On each run:
-      New article     → upload & store hash + file_id
-      Changed article → delete old file, re-upload, update hash + file_id
-      Unchanged       → skip
+      New article                          → upload & store hash + file_id
+      Changed article                      → delete old file, re-upload, update hash + file_id
+      Unchanged, present in vector store   → skip
+      Unchanged, deleted from vector store → re-upload (treat as new)
   - Logs a summary: Added | Updated | Skipped
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -63,19 +65,75 @@ def _delete_from_vector_store(
         logger.warning("Could not delete file %s: %s", file_id, exc)
 
 
+def _fetch_remote_file_ids(
+    client: openai.OpenAI, vector_store_id: str
+) -> set[str]:
+    """
+    Return the set of file IDs currently attached to the vector store.
+    Handles pagination so no files are missed.
+    """
+    remote_ids: set[str] = set()
+    after: str | None = None
+    while True:
+        params: dict = {"limit": 100}
+        if after:
+            params["after"] = after
+        try:
+            page = client.vector_stores.files.list(
+                vector_store_id=vector_store_id, **params
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not list vector store files (skipping remote check): %s", exc
+            )
+            break
+        for vf in page.data:
+            remote_ids.add(vf.id)
+        if not page.has_more:
+            break
+        after = page.data[-1].id
+    return remote_ids
+
+
+# Auto-chunking parameters (mirrors OpenAI's "auto" defaults)
+_CHUNK_TOKENS = 800
+_CHUNK_OVERLAP = 400
+_CHARS_PER_TOKEN = 4  # rough but consistent estimate
+
+
+def _estimate_chunks(filepath: str) -> int:
+    """
+    Estimate the number of chunks OpenAI will create for a file.
+
+    Formula (mirrors the auto strategy: 800-token chunks with 400-token overlap):
+        chunks = max(1, ceil((total_tokens - chunk_size) / stride) + 1)
+    where stride = chunk_size - overlap = 800 - 400 = 400.
+    """
+    char_count = Path(filepath).stat().st_size
+    total_tokens = char_count / _CHARS_PER_TOKEN
+    if total_tokens <= _CHUNK_TOKENS:
+        return 1
+    stride = _CHUNK_TOKENS - _CHUNK_OVERLAP  # 400
+    return math.ceil((total_tokens - _CHUNK_TOKENS) / stride) + 1
+
+
 def _upload_file(
     client: openai.OpenAI, vector_store_id: str, filepath: str
-) -> str:
+) -> tuple[str, int]:
     """
-    Upload a single file to the vector store using OpenAI's chunking (auto strategy).
-    Returns the file_id of the newly uploaded file.
+    Upload a single file to the vector store using OpenAI's auto chunking strategy
+    (800-token chunks, 400-token overlap).
+
+    Returns:
+        (file_id, estimated_chunk_count)
     """
+    chunks = _estimate_chunks(filepath)
     with open(filepath, "rb") as f:
         response = client.vector_stores.files.upload_and_poll(
             vector_store_id=vector_store_id,
             file=(os.path.basename(filepath), f, "text/plain"),
         )
-    return response.id
+    return response.id, chunks
 
 
 def upload_delta(
@@ -108,6 +166,15 @@ def upload_delta(
 
     state = load_state()
     added = updated = skipped = errors = 0
+    files_embedded = 0   # files actually uploaded this run
+    chunks_embedded = 0  # estimated chunks for those files
+
+    # Fetch the live file IDs from the vector store once.
+    # This lets us detect articles that were manually deleted from the store
+    # even when their content hash hasn't changed.
+    logger.debug("Fetching remote file list from vector store %s ...", vector_store_id)
+    remote_file_ids = _fetch_remote_file_ids(client, vector_store_id)
+    logger.debug("Remote vector store contains %d file(s).", len(remote_file_ids))
 
     for filepath in filepaths:
         slug = Path(filepath).stem
@@ -121,27 +188,39 @@ def upload_delta(
             existing = state.get(slug)
 
             if existing and existing.get("hash") == current_version:
-                skipped += 1
-                logger.debug("Skipped (unchanged): %s", slug)
-                continue
+                file_id = existing.get("file_id")
+                if file_id and file_id in remote_file_ids:
+                    # Content unchanged AND file still present remotely → skip
+                    skipped += 1
+                    logger.debug("Skipped (unchanged): %s", slug)
+                    continue
+                # Content unchanged BUT file was deleted from the vector store
+                # (or no file_id recorded) → fall through to re-upload as new
+                logger.info(
+                    "Re-uploading (missing from vector store): %s", slug
+                )
 
             if existing and existing.get("file_id"):
                 # Changed — delete old, re-upload
                 _delete_from_vector_store(
                     client, vector_store_id, existing["file_id"]
                 )
-                file_id = _upload_file(client, vector_store_id, filepath)
+                file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
                 state[slug] = {"hash": current_version, "file_id": file_id}
                 _save_state(state)
                 updated += 1
-                logger.info("Updated: %s", slug)
+                files_embedded += 1
+                chunks_embedded += chunk_count
+                logger.info("Updated: %s (~%d chunk(s))", slug, chunk_count)
             else:
                 # New article
-                file_id = _upload_file(client, vector_store_id, filepath)
+                file_id, chunk_count = _upload_file(client, vector_store_id, filepath)
                 state[slug] = {"hash": current_version, "file_id": file_id}
                 _save_state(state)
                 added += 1
-                logger.info("Added:   %s", slug)
+                files_embedded += 1
+                chunks_embedded += chunk_count
+                logger.info("Added:   %s (~%d chunk(s))", slug, chunk_count)
 
         except AuthenticationError:
             raise
@@ -149,12 +228,19 @@ def upload_delta(
             errors += 1
             logger.error("Error processing %s: %s", slug, exc)
 
-    summary = {"added": added, "updated": updated, "skipped": skipped, "errors": errors}
-    logger.info(
-        "Upload complete - Added: %d | Updated: %d | Skipped: %d | Errors: %d",
-        added,
-        updated,
-        skipped,
-        errors,
-    )
+    summary = {
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "files_embedded": files_embedded,
+        "chunks_embedded": chunks_embedded,
+    }
+    if files_embedded > 0:
+        logger.info(
+            "Embedded %d file(s), ~%d chunk(s) this run",
+            files_embedded,
+            chunks_embedded,
+        )
+    logger.info("Upload complete!")
     return summary
