@@ -10,9 +10,11 @@ import time
 
 from openai import AuthenticationError
 
+import os
+
 from scraper.scraper import scrape_articles
-from converter.markdown import convert_article
-from uploader.vector_store import upload_delta
+from converter.markdown import convert_article, ARTICLES_DIR
+from uploader.vector_store import upload_delta, load_state
 from observability.metrics import PipelineMetrics
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ class KnowledgeSyncPipeline:
             md_paths: list[str] = []
 
             scrape_start = time.perf_counter()
-            for article in scrape_articles():
+            for article in scrape_articles(100):
                 articles.append(article)
             scrape_duration = time.perf_counter() - scrape_start
 
@@ -54,8 +56,34 @@ class KnowledgeSyncPipeline:
             logger.info("Scrape complete: %d articles in %.1fs", len(articles), scrape_duration)
 
             # Phase 2: Convert
+            # Articles whose content changed (or are new) are converted and written to disk.
+            # Articles that are unchanged are NOT re-converted, but their existing .md paths
+            # are still collected so Phase 3 can verify they still exist in the vector store
+            # (a user may have manually deleted them there).
+            state = load_state()
             convert_start = time.perf_counter()
+            skipped_convert = 0
             for article in articles:
+                slug = article.get("slug")
+                updated_at = article.get("updated_at") or ""
+                existing = state.get(slug)
+
+                if existing and updated_at and existing.get("hash") == updated_at:
+                    existing_md = os.path.abspath(
+                        os.path.join(ARTICLES_DIR, f"{slug}.md")
+                    )
+                    if os.path.exists(existing_md):
+                        # Content unchanged AND .md on disk → skip re-conversion,
+                        # but keep the path so Phase 3 can verify remote existence.
+                        md_paths.append(existing_md)
+                        skipped_convert += 1
+                        continue
+                    # Content unchanged BUT .md missing from disk → fall through
+                    # to convert_article so the file is regenerated before upload.
+                    logger.info(
+                        "Re-converting (missing .md on disk): %s", slug
+                    )
+
                 try:
                     path = convert_article(article)
                     md_paths.append(path)
@@ -66,19 +94,12 @@ class KnowledgeSyncPipeline:
             self.metrics.articles_converted.set(len(md_paths))
             self.metrics.phase_duration.labels(phase="convert").set(round(convert_duration, 3))
             logger.info(
-                "Convert complete: %d/%d articles in %.1fs",
-                len(md_paths), len(articles), convert_duration,
+                "[Phase 2] Convert complete: %d/%d articles in %.1fs (Skipped convert: %d)",
+                len(md_paths), len(articles), convert_duration, skipped_convert
             )
 
-            if len(md_paths) < 30:
-                logger.warning(
-                    "WARNING: Only %d articles collected (target >= 30). "
-                    "The site structure may have changed.",
-                    len(md_paths),
-                )
-
             if not md_paths:
-                logger.error("No articles to upload.")
+                logger.error("No articles to upload (no .md files found).")
                 return False
 
             # Phase 3: Upload delta to Vector Store
