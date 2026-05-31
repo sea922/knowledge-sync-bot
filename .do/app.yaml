@@ -1,0 +1,21 @@
+name: optibot-sync
+region: nyc
+jobs:
+  - name: daily-sync
+    kind: SCHEDULED
+    schedule:
+      cron: "0 2 * * *" # Runs every day at 2 AM
+      time_zone: "UTC"
+    github:
+      repo: sea922/knowledge-sync-bot
+      branch: main
+    source_dir: /
+    dockerfile_path: Dockerfile
+    envs:
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: VECTOR_STORE_ID
+        scope: RUN_TIME
+      - key: ASSISTANT_ID
+        scope: RUN_TIME

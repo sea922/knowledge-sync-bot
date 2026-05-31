@@ -94,9 +94,13 @@ Deployed as a **DigitalOcean App Platform Job** scheduled at `0 2 * * *` (2 AM U
 - Add env vars (`OPENAI_API_KEY`, `VECTOR_STORE_ID`, `ASSISTANT_ID`) in App settings.
 - The job exits `0` on success.
 
-**Last run logs:** *(add DigitalOcean job logs link here after first deploy)*
-
 ---
+
+**Job Artifacts & Logs:**
+- [View Latest Daily Job Logs](docs/daily_job_logs.txt)
+
+### Monitoring & Observability
+![Monitoring & Observability](docs/monitoring_and_observability.png)
 
 ## Screenshot
 
