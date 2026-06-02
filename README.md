@@ -38,16 +38,53 @@ cp .env.sample .env
 
 ## Run Locally
 
+### 1. Direct Python Run
+To run the sync pipeline, query the assistant, or run tests directly in your local environment:
 ```bash
-# Direct Python
+# Run the Knowledge Sync Pipeline
 python main.py
 
-# Unittest
+# Run all Unit Tests
 python -m pytest -v tests/
+```
 
-# Docker
+### 2. Standalone Docker Run
+To build and run the sync pipeline inside a secure, lightweight Docker container:
+```bash
+# Build the Docker image
 docker build -t knowledge-sync-bot .
+
+# Run the pipeline container using your local .env configuration
 docker run --env-file .env knowledge-sync-bot
+```
+
+### 3. Docker Compose (Monitoring & Observability Stack)
+A complete telemetry stack (Prometheus, Grafana, Loki, Promtail, and Pushgateway) is provided in `docker-compose.yml` to monitor pipeline execution metrics, duration, sync counts, and logs.
+
+```bash
+# Start all monitoring and logging services in the background
+docker compose up -d
+
+# Verify all services are running
+docker compose ps
+
+# Stop the monitoring services when finished
+docker compose down
+```
+
+Once running, you can access the following local dashboards:
+*   **Grafana Dashboard:** [http://localhost:3000](http://localhost:3000) (Login with `admin` / `admin`)
+*   **Prometheus Target Console:** [http://localhost:9090](http://localhost:9090)
+*   **Pushgateway Metrics:** [http://localhost:9091](http://localhost:9091)
+
+#### Telemetry Note for Docker Container Runs:
+If you are running the pipeline as a standalone Docker container (Step 2) and want it to push metrics to the active Docker Compose Pushgateway (Step 3), override the telemetry URL to point to the host gateway:
+```bash
+# On macOS / Windows
+docker run --env-file .env -e PUSHGATEWAY_URL=http://host.docker.internal:9091 knowledge-sync-bot
+
+# On Linux
+docker run --env-file .env --network="host" knowledge-sync-bot
 ```
 
 ---
@@ -106,5 +143,4 @@ Deployed as a **DigitalOcean App Platform Job** scheduled at `0 2 * * *` (2 AM U
 ## Screenshot
 
 *Assistant answering "How do I add a YouTube video?" in OpenAI Playground:*
-
-*(add screenshot here)*
+![ask_assistant](demo/ask_assistant.png)
