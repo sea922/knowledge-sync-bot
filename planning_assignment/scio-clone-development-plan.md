@@ -703,6 +703,11 @@ CREATE TABLE audit_logs (
   metadata JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- INDEXES FOR PERFORMANCE & TENANCY
+CREATE INDEX idx_screens_org_id ON screens(org_id);
+CREATE INDEX idx_assets_org_id ON assets(org_id);
+CREATE INDEX idx_playback_logs_org_screen ON playback_logs(org_id, screen_id, played_at);
 ```
 
 ---
@@ -1147,6 +1152,7 @@ We would focus on:
 
 | Risk | What Could Go Wrong | My Mitigation |
 |---|---|---|
+| **Device Offline Resilience** | Screens lose internet but must keep playing. WebSockets drop frequently in retail/restaurant environments. | Implement **Offline-First** player architecture. Cache playlist JSON and media locally via IndexedDB/Service Worker. Implement background sync to queue and push playback logs when connection is restored. |
 | **Playlist DnD complexity** | Cross-container drag from asset picker → playlist is hard to get right | Build a prototype on day 1 of Phase 3. dnd-kit handles this natively — but I need to learn the API. Time-box to 2 days. |
 | **Weekly calendar UI** | Custom calendar grid is the most complex UI component in the app | Try FullCalendar first (1 day). If it's too rigid for SCIO's exact layout, build a simpler CSS Grid version. |
 | **Schedule conflicts** | Two events overlap on the same screen | Clear priority rule: specific date > weekly recurring > default playlist. Prevent overlap in the UI with validation. |
@@ -1169,6 +1175,9 @@ If this clone needed to serve production traffic:
 6. **Feature flags** — Gradual rollout of Engage, AI Designer features.
 7. **Cursor-based pagination** — Already planned with `after/first` args; optimize indexes for large-dataset queries.
 8. **Asset processing pipeline** — Dedicated service for video transcoding, PDF-to-image, multi-resolution thumbnails.
+9. **Database Tenancy Security (RLS)** — Implement PostgreSQL Row Level Security (RLS) to enforce tenant isolation at the database level, providing defense-in-depth beyond application logic.
+10. **Observability & CI/CD** — Add Datadog/Prometheus for APM, structured JSON logging, and a robust CI/CD pipeline (e.g., GitHub Actions to AWS ECS/EKS) for zero-downtime deployments.
+11. **Device Communication Protocol** — For 10,000+ screens, consider transitioning from GraphQL Subscriptions to a lightweight IoT protocol like MQTT for more resilient, low-bandwidth device connections.
 
 ---
 
