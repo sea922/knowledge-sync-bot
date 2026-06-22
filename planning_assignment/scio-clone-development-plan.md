@@ -436,7 +436,7 @@ The publisher transforms the AI-generated data into a live, high-performance web
   - **Updates:** If the user edits the template, a backend webhook calls `revalidatePath()` to silently regenerate and update the edge cache.
 - **Dynamic Open Graph (OG) Image:** A Serverless Edge Function (like `@vercel/og`) automatically renders a high-res thumbnail of the published page. This ensures beautiful, clickable link previews when the URL is shared on Facebook or Twitter.
 
-**✅ Done when:** Users can input a prompt, watch the AI multi-agent pipeline generate an editable template, and instantly publish it to an ultra-fast Edge-cached web page.
+**✅ Done when:** Users can input a prompt, watch AI generate an editable template, and publish it to an Edge-cached web page.
 
 ---
 
@@ -554,7 +554,7 @@ CREATE TABLE users (
   org_id UUID REFERENCES organizations(id),
   team_id UUID REFERENCES teams(id),
   email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
+  firebase_uid VARCHAR(128) UNIQUE NOT NULL,  -- links to Firebase Authentication
   display_name VARCHAR(255),
   avatar_url TEXT,
   role VARCHAR(20) DEFAULT 'editor',     -- owner | admin | editor | viewer
@@ -588,7 +588,7 @@ CREATE TABLE screens (
   pairing_code VARCHAR(6) UNIQUE,
   status VARCHAR(20) DEFAULT 'offline',  -- online | offline | issue
   folder_id UUID REFERENCES folders(id),
-  fleet_id UUID,
+  fleet_id UUID REFERENCES fleets(id),
   assigned_playlist_id UUID,
   assigned_schedule_id UUID,
   tags TEXT[],
@@ -617,6 +617,8 @@ CREATE TABLE assets (
   duration_sec INT,                      -- for videos; NULL for images
   app_config JSONB,                      -- for app-type assets (weather city, RSS url, etc.)
   tags TEXT[],
+  live_at TIMESTAMPTZ,                   -- when asset becomes active (NULL = immediately)
+  expire_at TIMESTAMPTZ,                 -- when asset expires (NULL = never)
   created_by UUID REFERENCES users(id),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -733,7 +735,6 @@ enum FolderAccessLevel { TEAM ACCOUNT ADMIN_ONLY }
 enum PermissionLevel   { VIEW EDIT }
 enum GroupBy           { DAY WEEK MONTH }
 
-type AuthPayload    { accessToken: String!, refreshToken: String!, user: User! }
 type User           { id: ID!, email: String!, displayName: String, role: UserRole!, orgId: ID!, avatarUrl: String }
 type UploadUrl      { uploadUrl: String!, assetUrl: String!, key: String! }
 type PageInfo       { hasNextPage: Boolean!, endCursor: String }
@@ -1006,7 +1007,28 @@ apps/web/src/
 
 SCIO is a **mature product built by a full engineering team over several years**. What we're estimating below is not "rebuild SCIO" — it's "build a functional clone that demonstrates the same core architecture and UX patterns."
 
-My estimate is structured in **3 milestones** to show what's realistic at each stage, tailored for a **5-person cross-functional team**. Additionally, I have split the timelines into two scenarios: **Without AI** (traditional development) vs **With AI** (leveraging Claude/CodeX).
+My estimate is structured in **3 milestones** to show what's realistic at each stage, tailored for a **5-person cross-functional team**. I provide two scenarios: **Without AI** (traditional development) vs **With AI** (leveraging Claude/CodeX for boilerplate generation, test writing, and code review).
+
+### How I Estimated (Methodology)
+
+Good estimation isn't guessing — it's structured reasoning. Here's how I arrived at these numbers:
+
+1. **Task Decomposition:** Each phase was broken into concrete deliverables (API endpoints, UI components, infrastructure tasks). For example, Phase 2 (Files/Assets) = 1 presigned URL service + 1 paginated query + 15 mutation resolvers + upload dropzone UI + asset grid/list + context menu with 15 actions + thumbnail generation job.
+
+2. **Complexity Weighting:** Each deliverable was classified:
+   - **Simple** (~0.5 day): Standard CRUD endpoint, basic UI component (e.g., a filter dropdown)
+   - **Medium** (~1–2 days): Feature with state management + API integration (e.g., folder tree with permissions)
+   - **Complex** (~3–5 days): Novel interaction pattern requiring R&D (e.g., cross-container DnD editor, weekly calendar grid)
+
+3. **Parallelization Factor:** With a 5-person team (1 Tech Lead + 2 FE + 2 BE), frontend and backend work runs in parallel. The phase duration is `max(FE work, BE work)` — not `FE + BE`. For example, Phase 1: BE builds Screen/Folder resolvers (3 days) **while** FE builds the Screens page UI (4 days) → phase = 4 days, not 7.
+
+4. **Buffer (20%):** Each phase includes ~20% buffer for code reviews, unexpected bugs, cross-browser issues, and integration friction. The "Without AI" estimates include more buffer for manual boilerplate writing.
+
+5. **AI Impact Assessment:** The "With AI" scenario assumes:
+   - Boilerplate generation (CRUD resolvers, DTOs, basic React components): **~70% time savings**
+   - Complex logic (DnD interactions, schedule resolver, permission cascading): **~10-20% savings** (still requires human design)
+   - Testing (unit + integration + E2E): **~50% savings** (AI generates test skeletons, human reviews)
+   - Overall per-phase savings: **~40-45%**
 
 ### Assumptions
 
@@ -1015,23 +1037,22 @@ My estimate is structured in **3 milestones** to show what's realistic at each s
 - Familiar with React + NestJS.
 - Estimates include: design, API, UI, basic tests, and debugging.
 - **Does NOT include:** full production CI/CD setup, performance testing at scale, security audit, mobile/tablet optimization.
-- **AI Tools Used (for the "With AI" scenario):** Claude/CodeX
 
 ---
 
 ### Milestone 1 — Functional Prototype
-**Goal:** A working demo that covers the core user journey end-to-end (auth → screens → assets → playlists → schedules → push). 
+**Goal:** A working demo that covers the core user journey end-to-end (auth → screens → assets → playlists → schedules → push).
 *Note: The time estimates account for proper code reviews, handling edge cases, cross-browser UI quirks, and setting up testing infrastructure.*
 
-| Phase | Scope | Duration (Without AI) | Duration (With AI ⚡️) |
-|---|---|---|---|
-| Phase 0 — Setup & Auth | Monorepo, Docker, DB schema, register/login, app shell | **5 days** | **2 - 3 days** (Boilerplate & schema gen) |
-| Phase 1 — Screens | Screens CRUD, folders, list/grid, search, permissions | **7 days** | **4 days** (UI/CRUD generation) |
-| Phase 2 — Files/Assets | S3 upload, library, filters, thumbnails, edge cases | **8 days** | **4 days** (S3 helpers generated) |
-| Phase 3 — Playlists | Playlist CRUD, complex DnD editor, asset picker, options | **10 days** | **5 days** (dnd-kit logic assist) |
-| Phase 4 — Schedules | Schedule CRUD, weekly calendar UI, complex resolver logic | **8 days** | **4 days** (Resolver logic gen) |
-| Phase 5 — Integration | Connect modules, end-to-end testing, bug fixing, UI polish | **10 days** | **6 days** (Test suite auto-gen) |
-| | **Milestone 1 Total** | **~8–9 weeks (48 days)** | **~4.5–5 weeks (25 days)** |
+| Phase | Scope | Without AI | With AI ⚡️ | How Estimated |
+|---|---|---|---|---|
+| Phase 0 — Setup & Auth | Monorepo, Docker, DB schema, Firebase auth, app shell | **5 days** | **2–3 days** | Mostly boilerplate — AI cuts significantly. Complex part is Apollo + Firebase integration (~1 day manual either way). |
+| Phase 1 — Screens | Screens CRUD, folders, list/grid, search, permissions | **7 days** | **4 days** | BE: 6 resolvers (3d manual, 2d AI). FE: screens page + folder tree + modals (4d manual, 2d AI). Parallel = max. |
+| Phase 2 — Files/Assets | S3 upload, library, filters, thumbnails, 15 context menu actions | **8 days** | **4–5 days** | Heaviest module: 15 mutations + upload pipeline + thumbnail job. AI handles CRUD mutations fast, but S3 presign + BullMQ needs manual setup. |
+| Phase 3 — Playlists | Playlist CRUD, complex DnD editor, asset picker, options modals | **10 days** | **5–6 days** | Most complex UI. Cross-container DnD (dnd-kit) needs R&D (~3 days regardless). Options modals are form-heavy → AI accelerates significantly. |
+| Phase 4 — Schedules | Schedule CRUD, weekly calendar UI, resolver priority logic | **8 days** | **4–5 days** | Calendar grid is the hardest UI component. Try FullCalendar first (1d); if too rigid, build custom CSS Grid (3d). Resolver logic needs unit tests. |
+| Phase 5 — Integration | Connect all modules, E2E testing, bug fixing, UI polish | **10 days** | **6 days** | Integration friction is human work — AI helps write test suites but debugging cross-module issues is manual. 20% buffer included. |
+| | **Milestone 1 Total** | **~9–10 weeks (48 days)** | **~5–6 weeks (25–29 days)** | **~45% savings with AI** |
 
 **What's delivered:** A user can register → pair a screen → upload assets → build a playlist with drag-and-drop → schedule it on a weekly calendar → push content to screens. Basic folder organization and permissions work. Core CRUD for all modules is functional.
 
@@ -1042,15 +1063,15 @@ My estimate is structured in **3 milestones** to show what's realistic at each s
 ### Milestone 2 — Production-Ready MVP
 **Goal:** The product is stable, secure, and performant enough for internal testing or beta users.
 
-| Addition | Duration (Without AI) | Duration (With AI ⚡️) |
-|---|---|---|
-| Team & role management (invite, RBAC, "Shared with me") | **7 days** | **4 days** |
-| WebSocket real-time (heartbeat, live status, content push) | **8 days** | **4 days** |
-| Device management page (fleets, status dashboard, filters) | **7 days** | **4 days** |
-| Apps & Templates integration (Weather, RSS, browse gallery) | **10 days** | **5 days** |
-| Analytics (playback reports, charts, data tables, export) | **8 days** | **4 days** |
-| Comprehensive testing (unit + E2E), security audit & UI polish | **12 days** | **6 days** |
-| **Milestone 2 Total** | **~10 weeks (52 days)** | **~5–6 weeks (27 days)** |
+| Addition | Without AI | With AI ⚡️ | How Estimated |
+|---|---|---|---|
+| Team & role management (invite, RBAC, "Shared with me") | **7 days** | **4 days** | RBAC guards are pattern-heavy → AI excels. "Shared with me" query logic touches all modules → manual integration. |
+| WebSocket real-time (heartbeat, live status, content push) | **8 days** | **5 days** | GraphQL Subscriptions + Redis PubSub setup is ~2d infrastructure. Heartbeat + status broadcast per org is custom logic. |
+| Device management page (fleets, status dashboard, filters) | **7 days** | **4 days** | Mostly CRUD + dashboard UI. Status aggregation queries need optimization. AI handles fleet CRUD fast. |
+| Apps & Templates integration (Weather, RSS, browse gallery) | **10 days** | **5–6 days** | App JSONB config system needs design. Template gallery is UI-heavy with search + categories. AI accelerates component scaffolding. |
+| Analytics (playback reports, charts, data tables, export) | **8 days** | **5 days** | Recharts integration + date aggregation queries. Export pipeline (CSV/Excel/PDF via BullMQ) is ~3d manual setup. |
+| Testing (unit + E2E), security audit & polish | **12 days** | **6–7 days** | AI generates ~80% of test skeletons. Security review + accessibility audit are manual. Performance profiling is manual. |
+| **Milestone 2 Total** | **~10–11 weeks (52 days)** | **~6–7 weeks (29–33 days)** | **~40% savings with AI** |
 
 ---
 
@@ -1059,10 +1080,9 @@ My estimate is structured in **3 milestones** to show what's realistic at each s
 
 This involves massive product initiatives: Engage modules (Kiosks, QR), AI Web Publisher, Integrations (Canva, Zoom), and Enterprise scalability (multi-region, audit logs).
 
-| Scenario | Est. Duration | Notes |
-|---|---|---|
-| **Without AI** | **~4–6 months** | Traditional research, manual integrations, slow custom UI builds, solving complex distributed system issues. |
-| **With AI ⚡️** | **~2.5–3.5 months** | AI drastically cuts down time for learning 3rd-party SDKs (Canva/Zoom), generating Edge Next.js publisher code, and prototyping Engage wizards. |
+| Scenario | Without AI | With AI ⚡️ | Notes |
+|---|---|---|---|
+| **Estimated Duration** | **~4–6 months** | **~2.5–3.5 months** | AI cuts SDK learning curve and prototype speed, but enterprise features (multi-region, audit, billing) require careful manual architecture. |
 
 ---
 
@@ -1070,18 +1090,20 @@ This involves massive product initiatives: Engage modules (Kiosks, QR), AI Web P
 
 | Milestone | Scope | Without AI | With AI ⚡️ | Time Saved |
 |---|---|---|---|---|
-| **M1 — Prototype** | Core flow (screens → assets → playlists → schedules) | **8–9 weeks** | **4.5–5 weeks** | ~45% |
-| **M2 — MVP** | + Teams, real-time, device mgmt, templates, analytics | **10 weeks** | **5–6 weeks** | ~45% |
-| **M3 — Full parity** | + Engage, AI Publisher, enterprise, billing, integrations | **16–24 weeks** | **10–14 weeks** | ~40% |
-| **Total to Parity**| End-to-end mature platform | **~8–10 months** | **~4.5–6 months** | **~4 months saved** |
+| **M1 — Prototype** | Core flow (screens → assets → playlists → schedules) | **~9–10 weeks** | **~5–6 weeks** | ~45% |
+| **M2 — MVP** | + Teams, real-time, device mgmt, templates, analytics | **~10–11 weeks** | **~6–7 weeks** | ~40% |
+| **M3 — Full parity** | + Engage, AI Publisher, enterprise, billing, integrations | **~4–6 months** | **~2.5–3.5 months** | ~40% |
+| **Total to Parity** | End-to-end mature platform | **~10–13 months** | **~5.5–7.5 months** | **~4–5 months saved** |
 
-### What We'd Prioritize If Given 4 Weeks (With AI)
+### What We'd Prioritize If Given 4 Weeks (5-Person Team, With AI)
 
-With a 5-person team using Claude/CodeX, a 4-week sprint can comfortably deliver a highly polished **M1 Functional Prototype**. This shows a realistic understanding of software development where quality matters as much as speed.
-We would focus on:
-1. **Parallel Execution:** Backend generates Prisma schemas and NestJS resolvers with AI while Frontend scaffolds Vite + Tailwind/Radix UI.
-2. **AI Test Generation:** Rely on AI to write 80% of Jest/Playwright tests, ensuring high stability quickly.
-3. **Core Flow over Features:** Deliver Auth → Screens → Assets → Playlists → Schedules with robust quality, proper error handling, and clean architecture rather than rushing to add half-baked features.
+With a 5-person team using Claude/CodeX, a 4-week sprint can comfortably deliver a highly polished **M1 Functional Prototype**:
+1. **Week 1:** Monorepo + Docker + Prisma schema + Firebase auth + app shell (Tech Lead) **||** Screen/Folder resolvers (2 BE) **||** AppLayout + AuthLayout + SearchBar (2 FE).
+2. **Week 2:** Asset resolvers + S3 upload pipeline + thumbnail job (2 BE) **||** Screens page + Assets page + upload dropzone (2 FE) **||** Code review + integration (Tech Lead).
+3. **Week 3:** Playlist + Schedule resolvers + resolver priority logic (2 BE) **||** Playlist DnD editor + Schedule calendar (2 FE) **||** Push-to-Screens API (Tech Lead).
+4. **Week 4:** Integration testing + bug fixes (full team) **||** UI polish + E2E tests (2 FE) **||** Performance + security review (Tech Lead + 2 BE).
+
+This delivers the full core user journey with clean architecture, proper error handling, and test coverage — rather than rushing to add half-baked secondary features.
 
 **The goal is to demonstrate architectural maturity, realistic scoping, and the ability to leverage AI for a high-quality codebase.**
 
