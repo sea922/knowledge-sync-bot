@@ -1,7 +1,7 @@
 # SCIO Clone App – Development Plan
 
 **OptiSigns Take-Home Assignment**
-**Role:** Mid-Level Fullstack Developer (React / NestJS)
+**Role:** Mid/Senior Fullstack Developer (React / NestJS)
 **Author:** Sy Truong · June 2026
 
 ---
@@ -55,8 +55,8 @@ These are the features without which the app is not functional:
 
 | # | Feature | What to Build |
 |---|---|---|
-| 0a | **Global Search (all pages)** | Reusable `<SearchBar>` component with 300 ms debounce, URL-synced (`?search=` query param), wired to every listing page via TanStack Query — Screens, Files/Assets, Playlists, Schedules, Templates, Device Management  |
-| 1 | **Authentication** | Register (creates org + first user), login, JWT access + refresh token rotation, logout, protected routes |
+| 0a | **Global Search (all pages)** | Reusable `<SearchBar>` component with 300 ms debounce, URL-synced (`?search=` query param), wired to every listing page via Apollo Client — Screens, Files/Assets, Playlists, Schedules, Templates, Device Management  |
+| 1 | **Authentication** | Register (creates org + first user via Firebase), login (Firebase SDK — Email/Password, Google, Facebook OAuth), logout (revoke Firebase sessions), protected routes (Firebase ID Token verification on backend) |
 | 2 | **Screen Management** | Add Screen modal (6-digit pairing code), screens list with search/filter/sort, list/grid view toggle, folder organization, status badges (online/offline/issue) |
 | 2a | **Screen-Page Folder Actions** | Per-folder context menu on the Screens page: Move (relocate folder in tree), Rename (edit folder name inline), Change Permission (update access level + team), Remove (delete folder with confirmation) |
 | 3 | **Folders & Permissions** | Create folder with name + security settings (team picker, access level: team/account/admin_only, permission: view/edit), nested folder tree, shared across all modules |
@@ -375,7 +375,7 @@ Here is the work broken down into clear, actionable phases. Each phase has a cle
 
 ---
 
-### Phase 8 — AI Designer & Web Publisher
+### Phase 8 — AI Designer & Web Publisher *(Stretch Goal — Product Vision, not part of core clone scope)*
 **Goal:** Elevate the app from a standard CMS to an AI-driven marketing tool. Users can generate ready-to-use templates via AI prompts, edit them, and publish them instantly.
 
 > **💡 Architectural Note (Product Ideation):** The core AI architecture assigns specific roles to the best AI models to optimize speed, cost, and quality:
@@ -559,7 +559,8 @@ CREATE TABLE users (
   avatar_url TEXT,
   role VARCHAR(20) DEFAULT 'editor',     -- owner | admin | editor | viewer
   invite_status VARCHAR(20) DEFAULT 'accepted',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- FOLDERS (shared across screens, assets, playlists, schedules)
@@ -570,17 +571,28 @@ CREATE TABLE folders (
   parent_id UUID REFERENCES folders(id),
   type VARCHAR(20) NOT NULL,             -- screen | asset | playlist | schedule | engage
   access_level VARCHAR(30) DEFAULT 'team',  -- team | account | admin_only
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE folder_permissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   folder_id UUID REFERENCES folders(id),
   team_id UUID REFERENCES teams(id),
-  permission VARCHAR(10) DEFAULT 'edit'  -- view | edit
+  permission VARCHAR(10) DEFAULT 'edit',  -- view | edit
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- SCREENS & DEVICES
+CREATE TABLE fleets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID REFERENCES organizations(id),
+  name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE screens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id UUID REFERENCES organizations(id),
@@ -589,18 +601,12 @@ CREATE TABLE screens (
   status VARCHAR(20) DEFAULT 'offline',  -- online | offline | issue
   folder_id UUID REFERENCES folders(id),
   fleet_id UUID REFERENCES fleets(id),
-  assigned_playlist_id UUID,
-  assigned_schedule_id UUID,
+  assigned_playlist_id UUID,             -- FK added after playlists table
+  assigned_schedule_id UUID,             -- FK added after schedules table
   tags TEXT[],
   last_seen_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE fleets (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id UUID REFERENCES organizations(id),
-  name VARCHAR(255) NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- FILES / ASSETS
@@ -654,7 +660,8 @@ CREATE TABLE playlist_items (
   play_every VARCHAR(20) DEFAULT 'no_repeat',
   item_schedule JSONB,
   target_tags TEXT[],
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- SCHEDULES
@@ -680,7 +687,8 @@ CREATE TABLE schedule_events (
   end_date DATE,
   is_recurring BOOLEAN DEFAULT TRUE,
   color VARCHAR(7),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ANALYTICS & AUDIT
@@ -706,9 +714,20 @@ CREATE TABLE audit_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- DEFERRED FOREIGN KEYS (cross-table references created after all tables exist)
+ALTER TABLE screens ADD CONSTRAINT fk_screens_playlist FOREIGN KEY (assigned_playlist_id) REFERENCES playlists(id);
+ALTER TABLE screens ADD CONSTRAINT fk_screens_schedule FOREIGN KEY (assigned_schedule_id) REFERENCES schedules(id);
+
 -- INDEXES FOR PERFORMANCE & TENANCY
 CREATE INDEX idx_screens_org_id ON screens(org_id);
+CREATE INDEX idx_screens_org_folder ON screens(org_id, folder_id);
 CREATE INDEX idx_assets_org_id ON assets(org_id);
+CREATE INDEX idx_assets_org_folder ON assets(org_id, folder_id);
+CREATE INDEX idx_folders_org_type ON folders(org_id, type);
+CREATE INDEX idx_playlists_org_id ON playlists(org_id);
+CREATE INDEX idx_schedules_org_id ON schedules(org_id);
+CREATE INDEX idx_playlist_items_playlist ON playlist_items(playlist_id, position);
+CREATE INDEX idx_schedule_events_schedule ON schedule_events(schedule_id);
 CREATE INDEX idx_playback_logs_org_screen ON playback_logs(org_id, screen_id, played_at);
 ```
 
@@ -779,6 +798,9 @@ enum ExportFormat      { CSV EXCEL PDF }
 type PlaybackDataPoint { date: String!, playCount: Int!, durationSec: Int! }
 type PlaybackReport    { data: [PlaybackDataPoint!]!, totalPlayCount: Int!, totalDurationSec: Int! }
 type PlaybackRow       { assetId: ID!, assetName: String!, type: AssetType!, playCount: Int!, durationSec: Int! }
+
+# Real-time
+type ScreenHeartbeat   { screenId: ID!, status: ScreenStatus!, cpuUsage: Float, memoryUsage: Float, timestamp: DateTime! }
 ```
 
 ### Queries
@@ -1151,6 +1173,23 @@ This delivers the full core user journey with clean architecture, proper error h
 └──────────────────────────────────────────────────────────┘
 ```
 
+### Key Data Flow: "Push to Screen"
+
+To understand how data moves through this architecture, here is the exact flow when a user assigns a playlist to a screen:
+
+```text
+1. User clicks "Push to Screen" on the frontend
+  → Frontend calls pushPlaylistToScreens mutation
+  → Backend updates screens.assigned_playlist_id in DB
+  → Backend publishes to Redis PubSub channel: `content:${screenId}`
+  → GraphQL Subscription `contentUpdated(screenId)` fires
+  → Screen player receives event via WebSocket
+  → Screen player calls screenCurrentContent query to get new assignment
+  → Player fetches new playlist JSON + new assets, caches them locally
+  → Player starts playback of the new content
+  → Player periodically sends playback_log entries back to API (analytics)
+```
+
 ---
 
 ## 10. Technical Decisions & Tradeoffs
@@ -1203,4 +1242,4 @@ If this clone needed to serve production traffic:
 
 ---
 
-*This plan is meant for discussion. I can adjust priorities, swap technologies, or dive deeper into any section based on team feedback.*
+*This plan reflects my understanding of SCIO after the walkthrough and independent exploration. I'm confident in the architecture and prioritization, and I'm ready to dive deeper into any section during our discussion.*
